@@ -14,11 +14,12 @@ type Config struct {
 	// Pool is the number of browser processes, and so of renders at once (default 2). A process renders one page at a
 	// time: no two renders ever share a process.
 	Pool int
-	// RecycleAfter renders, a process is replaced (default 50); RecycleMemoryMB: a process whose tree holds more than this
+	// RecycleAfter renders, a process is replaced (default 50); RecycleMemoryMB: a process whose tree has grown by more than this (over its first render's baseline, mem.go)
 	// after a render is replaced (default 1024). A process after any failed render is replaced whatever these say.
 	RecycleAfter    int
 	RecycleMemoryMB int
-	// RenderMemoryMB is the most the tree of a process may hold while it renders (default 1536); above it the render is
+	// RenderMemoryMB is the most the tree of a process may GROW while it renders, over the baseline taken when the render's context
+	// was created (default 1536; growth, not an absolute, because /proc does not account the same everywhere: mem.go); above it the render is
 	// ended as render_failed and the process is killed. Zero disables the watch.
 	RenderMemoryMB int
 

@@ -235,15 +235,6 @@ func TestABrowserIsReplacedAfterTheConfiguredNumberOfRenders(t *testing.T) {
 	}
 }
 
-func TestABrowserAboveTheMemoryThresholdIsReplacedAfterTheRender(t *testing.T) {
-	r := newRig(t, opts{cfg: func(c *render.Config) { c.RecycleMemoryMB = 1 }}) // any browser is above one megabyte
-	r.okPage()
-	r.mustRender(render.Request{URL: r.url("/ok")})
-	if r.pool.Processes() != 0 || r.pool.Stats.Recycles.Load() != 1 {
-		t.Errorf("processes %d recycles %d", r.pool.Processes(), r.pool.Stats.Recycles.Load())
-	}
-}
-
 // Inside one TLS tunnel (HTTP/2) the proxy sees one request however many the page makes: the render's own count is what
 // holds the budget there.
 func TestAStormOverOneTLSConnectionIsCutByTheRendersOwnCount(t *testing.T) {

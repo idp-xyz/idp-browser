@@ -1,15 +1,16 @@
 # The renderer image: idp-browser and a pinned Chromium, with no shell, no package manager and nothing else (ADR-0001 D10).
 #
 # The Chromium is chromedp's headless-shell build of Chromium 159.0.8154.13 (BSD-3-Clause), taken by the digest of its
-# multi-platform index and nothing else: the tag moves, the digest does not. It is added to the platform's
-# releases/mirror-images.yaml (see README.md, "Images"), and CHROMIUM_IMAGE is overridden by deploy/build.sh to the copy the
+# multi-platform index and nothing else: the tag moves, the digest does not. The default below is the platform's copy of it
+# (releases/mirror-images.yaml, ghcr.io/idp-xyz/mirror, the same digest: a mirrored image IS the source image), since Docker Hub is
+# rate limited and often unreachable; CHROMIUM_IMAGE is overridden by deploy/build.sh to the copy the
 # builder has (the offline build has no registry).
 #
 # Stage 1 copies out of that image exactly what Chromium needs to run: its directory, the shared libraries the dynamic
 # linker finds for it and for the libraries NSS loads by name later (dlopen), the fonts and their configuration. Stage 2
 # is scratch: the final image has none of the Debian userland (no sh, no apt, no coreutils), so a Chromium escape finds
 # no tools in the container.
-ARG CHROMIUM_IMAGE=docker.io/chromedp/headless-shell@sha256:381353d3530ab9d579d2fe8b9c0f4519c995617f5a71daf6bb649e2d12005bd9
+ARG CHROMIUM_IMAGE=ghcr.io/idp-xyz/mirror:docker.io__chromedp__headless-shell__159.0.8154.13@sha256:381353d3530ab9d579d2fe8b9c0f4519c995617f5a71daf6bb649e2d12005bd9
 FROM ${CHROMIUM_IMAGE} AS chromium
 RUN set -eu; mkdir -p /out/usr/lib64 /out/etc /out/profile /out/tmp; \
     cp -a /headless-shell /out/headless-shell; rm -f /out/headless-shell/run.sh; \

@@ -40,8 +40,8 @@ renderer（`cmd/idp-browser/main.go` 顶部有同一张表；密钥一律读文�
 | `IDP_BROWSER_CALLER_KEYS_FILE`、`_CALLER_AUDIENCE`、`_CALLER` | 必填、必填、`idp-web` | idp-web 的公钥（可多把，轮换用）、受众、唯一被接受的调用者 |
 | `IDP_BROWSER_POOL` | 2 | Chromium 进程数，也是同时渲染数；一个进程一次只渲染一页 |
 | `IDP_BROWSER_RECYCLE_AFTER` | 50 | 一个进程渲染这么多次后换新 |
-| `IDP_BROWSER_RECYCLE_MEMORY_MB` | 1024 | 一次渲染后进程树的私有内存超过它就换新 |
-| `IDP_BROWSER_RENDER_MEMORY_MB` | 1536 | 渲染**期间**超过它，渲染以 `render_failed` 结束、进程被杀（0 关闭） |
+| `IDP_BROWSER_RECYCLE_MEMORY_MB` | 1024 | 一次渲染后进程树的内存比这个进程**第一次渲染时的基线**多出这么多，就换新（看增长，不看绝对值） |
+| `IDP_BROWSER_RENDER_MEMORY_MB` | 1536 | 渲染**期间**进程树的内存比**渲染开始时的基线**（上下文刚建好）多出这么多，渲染以 `render_failed` 结束、进程被杀（0 关闭）。看增长而不是绝对值：不同内核的 /proc 记法不同（gVisor 里 statm 的 shared 恒为 0，空闲的 headless-shell 树就量出约 1.6 GiB），基线抵消这个常数。内存的读法：`/proc/<pid>/status` 的 `RssAnon`（匿名页：页面分配的东西，不含共享库），没有就用 statm 的驻留减共享，共享为 0 就用整个驻留集 |
 | `IDP_BROWSER_NO_SANDBOX` + `IDP_BROWSER_ISOLATED_BY` | `false` + 空 | `--no-sandbox` 只在 Pod 跑在 gVisor 或 Kata 下才允许：设了前者而后者不是 `gvisor` 或 `kata`，服务**拒绝启动**（退出码 2） |
 | `IDP_BROWSER_PROFILE_DIR` | `/profile` | 浏览器配置目录；清单里是内存 tmpfs。启动时会清掉上次被杀留下的 `p*-*` 目录 |
 | `IDP_BROWSER_PROXY`、`_PROXY_ADMIN`、`_PROXY_ADMIN_KEY_FILE` | 必填 | 代理的 `host:port`、管理口 URL、共享密钥（至少 32 字节） |
@@ -70,7 +70,7 @@ proxy（`cmd/idp-browser-proxy/main.go`）：`IDP_BROWSER_PROXY_LISTEN`（3128�
     target: ghcr.io/idp-xyz/mirror:docker.io__chromedp__headless-shell__159.0.8154.13
   ```
 
-  （2026-11-23 经 docker.m.daocloud.io 与 docker.1ms.run 两个镜像站得到，两者一致，Docker Hub 当时 502：按清单头部的说明加 `resolvedVia: mirrors`，等 GitHub 上跑过一次后删掉。）`deploy/Dockerfile` 的 `CHROMIUM_IMAGE` 在平台里换成镜像的引用。
+  （2026-11-23 经 docker.m.daocloud.io 与 docker.1ms.run 两个镜像站得到，两者一致，Docker Hub 当时 502：按清单头部的说明加 `resolvedVia: mirrors`，等 GitHub 上跑过一次后删掉。）`deploy/Dockerfile` 的 `CHROMIUM_IMAGE` 缺省已经是镜像的引用（同一个摘要），不需要在平台里再换。
 - **本机没有它时**：Docker Hub 拉不动是常态。`bash tools/pull_image.sh docker.io/chromedp/headless-shell@sha256:381353…`（平台仓库，带重试）；还不行就用 crane，经镜像站，再 `docker load`：
 
   ```bash

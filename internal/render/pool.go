@@ -33,6 +33,7 @@ type Pool struct {
 	slots []*slot
 
 	closed atomic.Bool
+	meter  memMeter
 	Stats  Stats
 }
 
@@ -74,7 +75,8 @@ type slot struct {
 	bcancel context.CancelFunc
 	proc    *os.Process
 	dir     string
-	renders int // renders by this process
+	renders int   // renders by this process
+	baseMem int64 // the memory of its tree at its first render (mem.go): the recycle is by growth over it
 }
 
 // New validates the configuration and makes the pool. No browser is started until the first render.
@@ -94,7 +96,7 @@ func New(cfg Config) (*Pool, error) {
 			_ = os.RemoveAll(d)
 		}
 	}
-	p := &Pool{cfg: cfg, log: cfg.Log, px: newProxyClient(cfg.ProxyAdmin, cfg.ProxyAdminKey), free: make(chan *slot, cfg.Pool)}
+	p := &Pool{meter: systemMeter(), cfg: cfg, log: cfg.Log, px: newProxyClient(cfg.ProxyAdmin, cfg.ProxyAdminKey), free: make(chan *slot, cfg.Pool)}
 	for i := 0; i < cfg.Pool; i++ {
 		s := &slot{idx: i, pool: p}
 		p.slots = append(p.slots, s)
@@ -186,6 +188,7 @@ func (s *slot) start() error {
 	}
 	s.proc = chromedp.FromContext(bctx).Browser.Process()
 	s.renders = 0
+	s.baseMem = 0
 	s.pool.Stats.Starts.Add(1)
 	return nil
 }
@@ -246,9 +249,14 @@ func (p *Pool) release(s *slot, tainted bool) {
 		s.stop()
 	case s.renders >= p.cfg.RecycleAfter:
 		s.stop()
-	case p.cfg.RecycleMemoryMB > 0 && treeRSS(s.proc.Pid) > int64(p.cfg.RecycleMemoryMB)<<20:
+	case p.memoryRecycle(s):
 		p.log.Info("browser recycled", "reason", "memory")
 		s.stop()
 	}
 	p.free <- s
+}
+
+// memoryRecycle: the tree of the slot's process has grown by more than RecycleMemoryMB over the baseline of its first render.
+func (p *Pool) memoryRecycle(s *slot) bool {
+	return s.proc != nil && grewBeyond(s.baseMem, p.meter.tree(s.proc.Pid), int64(p.cfg.RecycleMemoryMB))
 }

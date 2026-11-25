@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -142,6 +143,16 @@ type pageState struct {
 	domReady  chan struct{}
 	loadOnce  sync.Once
 	domOnce   sync.Once
+	pid       int          // the browser process, for the memory baseline
+	baseMem   atomic.Int64 // the memory of its tree when the render's context was created (0: not yet)
+}
+
+func (st *pageState) init() {
+	st.inflight = map[network.RequestID]struct{}{}
+	st.mainHosts = map[string]bool{}
+	st.loaded = make(chan struct{})
+	st.domReady = make(chan struct{})
+	st.lastNet = time.Now()
 }
 
 func (st *pageState) quiet(d time.Duration) bool {
@@ -180,8 +191,13 @@ func (p *Pool) run(parent context.Context, s *slot, u string, timeout time.Durat
 	rctx, rcancel := context.WithCancelCause(s.bctx)
 	deadline := time.AfterFunc(timeout, func() { rcancel(errDeadline) })
 	stopWatch := make(chan struct{})
+	st := &pageState{}
+	st.init()
+	// The memory watch: the render is judged by the growth of its browser's process tree over the baseline that drive takes once
+	// the render's context exists (mem.go); until then there is none, so nothing trips.
 	if p.cfg.RenderMemoryMB > 0 && s.proc != nil {
-		go func(pid int) {
+		st.pid = s.proc.Pid
+		go func() {
 			t := time.NewTicker(250 * time.Millisecond)
 			defer t.Stop()
 			for {
@@ -189,16 +205,15 @@ func (p *Pool) run(parent context.Context, s *slot, u string, timeout time.Durat
 				case <-stopWatch:
 					return
 				case <-t.C:
-					if treeRSS(pid) > int64(p.cfg.RenderMemoryMB)<<20 {
+					if grewBeyond(st.baseMem.Load(), p.meter.tree(st.pid), int64(p.cfg.RenderMemoryMB)) {
 						rcancel(errMemory)
 						return
 					}
 				}
 			}
-		}(s.proc.Pid)
+		}()
 	}
 
-	st := &pageState{inflight: map[network.RequestID]struct{}{}, mainHosts: map[string]bool{}, loaded: make(chan struct{}), domReady: make(chan struct{}), lastNet: time.Now()}
 	paused := make(chan *fetch.EventRequestPaused, 8192)
 	var cctx context.Context
 	var ccancel context.CancelFunc
@@ -336,6 +351,9 @@ func (p *Pool) run(parent context.Context, s *slot, u string, timeout time.Durat
 		p.log.Warn("the proxy gave no account of the render", "err", uerr)
 	}
 
+	if s.baseMem == 0 {
+		s.baseMem = st.baseMem.Load() // this process's own baseline, from its first render
+	}
 	st.mu.Lock()
 	requests, blocked, skipped, status := st.requests, st.blocked, st.skipped, st.status
 	mainHosts := st.mainHosts
@@ -410,6 +428,9 @@ func (p *Pool) drive(ctx context.Context, st *pageState, u string, maxBytes int,
 	st.mainFrame = tree.FrameTree.Frame.ID
 	st.mu.Unlock()
 	bcid := chromedp.FromContext(ctx).BrowserContextID
+	if st.pid != 0 {
+		st.baseMem.Store(p.meter.tree(st.pid)) // the baseline of the memory watch: this browser, this context, nothing loaded yet
+	}
 
 	_, e1 := chromedp.Call(ctx, page.Enable, page.EnableParams{})
 	_, e2 := chromedp.Call(ctx, network.Enable, network.EnableParams{})
