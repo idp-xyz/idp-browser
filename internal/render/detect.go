@@ -72,6 +72,14 @@ var refusalMarkers = []string{
 
 var akamaiRef = regexp.MustCompile(`reference #\d+\.[0-9a-f]+\.\d+`)
 
+// foldText lower-cases text and makes the quotes and the white space of a refusal page comparable with the markers: curly
+// and modifier apostrophes and primes become ', curly double quotes become ", runs of white space one space. A site that
+// writes "don’t" with U+2019 is the same refusal. The same function is in idp-web (internal/fetch/blocked.go); keep them identical.
+func foldText(s string) string {
+	s = strings.NewReplacer("\u2019", "'", "\u2018", "'", "\u02bc", "'", "\u2032", "'", "\u201c", "\"", "\u201d", "\"").Replace(strings.ToLower(s))
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // Detect reports whether a rendered page is a block, and which rule says so. html is the rendered source, text the
 // visible text.
 func Detect(status int, title, html, text string) (string, bool) {
@@ -84,12 +92,13 @@ func Detect(status int, title, html, text string) (string, bool) {
 				return "S1 html marker " + m, true
 			}
 		}
+		folded := foldText(text)
 		for _, m := range refusalMarkers {
-			if strings.Contains(lowerText, m) {
+			if strings.Contains(folded, m) {
 				return "S4 refusal text " + m, true
 			}
 		}
-		if akamaiRef.MatchString(lowerText) {
+		if akamaiRef.MatchString(folded) {
 			return "S4 refusal text Akamai reference", true
 		}
 	}

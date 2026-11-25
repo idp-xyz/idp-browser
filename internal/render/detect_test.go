@@ -21,6 +21,7 @@ func TestDetect(t *testing.T) {
 		{"datadome", 200, "x", `<iframe src="https://geo.captcha-delivery.com/captcha/">`, "", true, "S1"},
 		{"akamai errors page (HTTP 200)", 200, "Access Denied", `<html>Reference #18.4a3d1c02.1795089600.abc123</html>`, "Access Denied You don't have permission to access \"http://x/\" on this server. Reference #18.4a3d1c02.1795089600.abc123", true, "S"},
 		{"fedex soft block (HTTP 200)", 200, "", "<html>", "We're sorry, we can't process your request right now. It appears you don't have permission to view this webpage. Incident Number: 0.11a6b4d.1795089600.5f2c", true, "S4"},
+		{"fedex with a curly apostrophe and odd spacing", 200, "", "<html>", "We\u2019re sorry, we can\u2019t   process your request right now.\n It appears you don\u2019t have permission to view this webpage.", true, "S4"},
 		{"imperva", 200, "", "<html>", "Request unsuccessful. Incapsula incident ID: 1234-5678", true, "S4"},
 		{"chinese security check", 200, "", "<html>", "正在进行安全检测", true, "S3"},
 		{"a bare 403", 403, "", "<html>", "Forbidden", true, "S5"},
