@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # the Chromium base of the renderer image: chromedp's headless-shell 159.0.8154.13, by digest, from the platform's mirror
+  # (releases/mirror-images.yaml in the platform repository; the same image as docker.io/chromedp/headless-shell@sha256:381353…).
+  # deploy/Dockerfile has the same reference as its default.
+  CHROMIUM_IMAGE: ghcr.io/idp-xyz/mirror:docker.io__chromedp__headless-shell__159.0.8154.13@sha256:381353d3530ab9d579d2fe8b9c0f4519c995617f5a71daf6bb649e2d12005bd9
+  TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.76.2
+
+jobs:
+  test:
+    name: unit tests and the images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Known vulnerabilities in the dependencies and the standard library (govulncheck)
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest && "$(go env GOPATH)/bin/govulncheck" ./...
+      - name: Format, vet, unit tests (no Chromium; includes the manifests)
+        run: make test
+      - name: The Chromium base image (the platform mirror)
+        run: bash deploy/ci-pull-base.sh "$CHROMIUM_IMAGE"
+      - name: Image builds (both images)
+        run: bash deploy/build.sh idp-browser-ci
+      - name: Image vulnerabilities (trivy, HIGH and CRITICAL with a fix fail the build)
+        run: |
+          for attempt in 1 2 3; do docker pull "$TRIVY_IMAGE" && break; sleep $((attempt * 20)); done
+          for image in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^idp-browser-ci'); do
+            echo "== $image"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$image"
+          done
+
+  browser:
+    name: browser tests (Chromium, in the renderer image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: The Chromium base image (the platform mirror)
+        run: bash deploy/ci-pull-base.sh "$CHROMIUM_IMAGE"
+      - name: Allow Chromium's own sandbox in the test container
+        # Ubuntu 24.04 runners restrict unprivileged user namespaces by AppArmor; the tests run Chromium with its own sandbox
+        # (make test-browser: seccomp unconfined, all capabilities dropped, uid 10600). The setting does not exist on older runners.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: make test-browser
+        run: make test-browser CHROMIUM_IMAGE="$CHROMIUM_IMAGE"
