@@ -1,0 +1,23 @@
+# idp-browser has a namespace of its own: its two kinds of pod have opposite network rules (the renderer reaches only the proxy,
+# the proxy reaches the internet and not the cluster), and the namespace is where the quota that bounds Chromium's memory lives.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: idp-browser
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# Chromium is the biggest memory user of the platform: the quota is the operator's bound on how much of the cluster renders can take.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: idp-browser
+  namespace: idp-browser
+spec:
+  hard:
+    pods: "20"
+    requests.cpu: "16"
+    requests.memory: 32Gi
+    limits.cpu: "32"
+    limits.memory: 64Gi

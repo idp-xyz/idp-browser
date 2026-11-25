@@ -1,0 +1,6 @@
+# The egress proxy image: one static binary, nothing else. It is the only pod of the component that may reach the
+# internet, so it carries no browser and no userland (ADR-0001 D10).
+FROM scratch
+COPY idp-browser-proxy /idp-browser-proxy
+USER 10601:10601
+ENTRYPOINT ["/idp-browser-proxy"]

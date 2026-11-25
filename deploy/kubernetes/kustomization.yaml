@@ -1,0 +1,40 @@
+# idp-browser on Kubernetes. NOT YET APPLIED TO A REAL CLUSTER: tests/deploy keeps these manifests consistent with each other and
+# with the code, and the platform's kind run (L1-4) applies them under Calico.
+#
+# What the operator creates before applying (none of it is in this repository; docs/RUNBOOK.md 2):
+#   ConfigMap idp-browser-caller-keys       key caller.pub: idp-web's public key (PEM, P-256)
+#   Secret    idp-browser-proxy-admin-key   key admin.key: at least 32 bytes
+# and the RuntimeClass named in settings.yaml (gVisor or Kata), which the cluster must have.
+#
+# No commonLabels: it would rewrite the NetworkPolicy peers that select other namespaces' pods (idp-web, kube-dns).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - settings.yaml
+  - renderer.yaml
+  - proxy.yaml
+  - networkpolicy.yaml
+labels:
+  - pairs:
+      app.kubernetes.io/name: idp-browser
+      app.kubernetes.io/part-of: idp-telos
+    includeTemplates: true
+# the two settings of settings.yaml, into the pod spec and the container's environment
+replacements:
+  - source: {kind: ConfigMap, name: idp-browser-settings, fieldPath: data.runtimeClass}
+    targets:
+      - select: {kind: Deployment, name: idp-browser}
+        fieldPaths: [spec.template.spec.runtimeClassName]
+  - source: {kind: ConfigMap, name: idp-browser-settings, fieldPath: data.isolatedBy}
+    targets:
+      - select: {kind: Deployment, name: idp-browser}
+        fieldPaths:
+          - spec.template.spec.containers.[name=renderer].env.[name=IDP_BROWSER_ISOLATED_BY].value
+images:
+  - name: idp-browser
+    newName: registry.example.com/idp/idp-browser      # set to the image built by deploy/build.sh, pinned by digest
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: idp-browser-proxy
+    newName: registry.example.com/idp/idp-browser-proxy
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000

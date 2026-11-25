@@ -1,0 +1,147 @@
+# Default deny, then exactly the flows needed (ADR-0001 D12). Two kinds of pod, opposite rules:
+#   renderer  (Chromium)  may reach the proxy and nothing else; only idp-web may reach it
+#   proxy                 may reach the public internet and not the cluster; only the renderer pods may reach it
+# The renderer's DNS rule is the one exception to "only the proxy": the service resolves the proxy's Service name once per
+# connection. Chromium cannot use it (it resolves no name itself: --host-resolver-rules), and a page cannot ask it anything.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: idp-browser
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: idp-browser
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# In, renderer: the API port from idp-web's pods, and nobody else; the ops port from the observability namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: renderer-ingress
+  namespace: idp-browser
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: renderer
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: idp-web
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: web
+      ports:
+        - {protocol: TCP, port: 8590}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - {protocol: TCP, port: 9590}
+---
+# Out, renderer: the proxy's two ports, in this namespace, and nothing else (DNS above). Not the internet, not the cluster, not
+# the Kubernetes API, not another namespace: a Chromium that is taken over can ask the proxy, which has the address rules.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: renderer-egress
+  namespace: idp-browser
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: renderer
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: proxy
+      ports:
+        - {protocol: TCP, port: 3128}
+        - {protocol: TCP, port: 3129}
+---
+# In, proxy: the proxy and admin ports from the renderer pods only; the ops port from the observability namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proxy-ingress
+  namespace: idp-browser
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: proxy
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: renderer
+      ports:
+        - {protocol: TCP, port: 3128}
+        - {protocol: TCP, port: 3129}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - {protocol: TCP, port: 9591}
+---
+# Out, proxy: to public addresses on 443 and 80. The proxy itself refuses every address the IANA special-purpose registries mark
+# as not globally reachable (internal/addr); the excepts below are its IPv4 part, and tests/deploy compares the two over the
+# whole IPv4 space. This is the same refusal made by the cluster, so that a bug in the proxy, or a DNS answer that slips through
+# it, does not open the cluster or the operator's network. If the cluster's pod, service or node addresses are not in the
+# ranges excluded below, add them. IPv4 only: with no IPv6 rule the proxy reaches no IPv6 address; a cluster that needs IPv6
+# destinations adds an ipBlock for ::/0 except fc00::/7, fe80::/10, ff00::/8 and its own ranges.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proxy-egress
+  namespace: idp-browser
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: proxy
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.0.2.0/24
+              - 192.88.99.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 198.51.100.0/24
+              - 203.0.113.0/24
+              - 224.0.0.0/3                  # multicast and 240.0.0.0/4, with 255.255.255.255
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 80}

@@ -1,0 +1,98 @@
+# The egress proxy: the only pod of the component that may reach the internet, and it carries no browser. The renders it serves
+# are registered in its MEMORY (internal/proxy/registry.go): a render's registration and its requests must reach the same pod,
+# so the Service keeps a renderer pod on the same proxy pod (sessionAffinity: ClientIP) and replicas is 1 as shipped. With more
+# than one, a proxy pod that dies takes the renders it held with it: idp-web gets render_failed and may ask again (ADR-0001 D5).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: idp-browser-proxy
+  namespace: idp-browser
+  labels:
+    app.kubernetes.io/component: proxy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: proxy
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10601
+        runAsGroup: 10601
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: proxy
+          image: idp-browser-proxy
+          ports:
+            - name: proxy
+              containerPort: 3128
+            - name: admin
+              containerPort: 3129
+            - name: ops
+              containerPort: 9591
+          env:
+            - name: IDP_BROWSER_PROXY_LISTEN
+              value: "0.0.0.0:3128"
+            - name: IDP_BROWSER_PROXY_ADMIN_LISTEN
+              value: "0.0.0.0:3129"
+            - name: IDP_BROWSER_PROXY_METRICS
+              value: "0.0.0.0:9591"
+            - name: IDP_BROWSER_PRIVATE_NETWORK       # the NetworkPolicy lets only the renderer pods reach the ports
+              value: "true"
+            - name: IDP_BROWSER_PROXY_ADMIN_KEY_FILE
+              value: /etc/idp/proxy/admin.key
+            - name: IDP_BROWSER_PORTS
+              value: "80,443"
+            - name: IDP_BROWSER_DIAL_FAMILY            # Happy Eyeballs, IPv4 first (ADR-0001 D6)
+              value: prefer-ipv4
+          readinessProbe:
+            httpGet: {path: /readyz, port: ops}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: ops}
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "2", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - {name: proxy-admin-key, mountPath: /etc/idp/proxy, readOnly: true}
+      volumes:
+        - name: proxy-admin-key
+          secret:
+            secretName: idp-browser-proxy-admin-key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: idp-browser-proxy
+  namespace: idp-browser
+  labels:
+    app.kubernetes.io/component: proxy
+spec:
+  selector:
+    app.kubernetes.io/component: proxy
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+  ports:
+    - name: proxy
+      port: 3128
+      targetPort: proxy
+    - name: admin
+      port: 3129
+      targetPort: admin

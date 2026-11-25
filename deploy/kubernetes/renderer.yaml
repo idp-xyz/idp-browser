@@ -1,0 +1,115 @@
+# The renderer: idp-browser and Chromium. NOT YET APPLIED TO A REAL CLUSTER: tests/deploy keeps these manifests consistent with
+# each other and with the code, and the platform's kind run (L1-4) applies them under Calico and gVisor.
+#
+# What the operator creates before applying (none of it is in this repository):
+#   ConfigMap idp-browser-caller-keys       key caller.pub: idp-web's public key (PEM, P-256) that signs the render requests
+#   Secret    idp-browser-proxy-admin-key   key admin.key: the key shared with the proxy (at least 32 bytes: openssl rand -hex 32)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: idp-browser
+  namespace: idp-browser
+  labels:
+    app.kubernetes.io/component: renderer
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: renderer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: renderer
+    spec:
+      runtimeClassName: gvisor                      # replaced by kustomization.yaml from settings.yaml
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10600
+        runAsGroup: 10600
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: renderer
+          image: idp-browser
+          ports:
+            - name: api
+              containerPort: 8590
+            - name: ops
+              containerPort: 9590
+          env:
+            - name: IDP_BROWSER_LISTEN
+              value: "0.0.0.0:8590"
+            - name: IDP_BROWSER_PRIVATE_NETWORK       # the NetworkPolicy lets only idp-web reach it
+              value: "true"
+            - name: IDP_BROWSER_METRICS
+              value: "0.0.0.0:9590"
+            # idp-web's signature over each request, made for THIS endpoint: the URL idp-web is configured to call, character for character
+            - name: IDP_BROWSER_CALLER_KEYS_FILE
+              value: /etc/idp/caller/caller.pub
+            - name: IDP_BROWSER_CALLER_AUDIENCE
+              value: "http://idp-browser.idp-browser.svc.cluster.local:8590/render"
+            # Chromium's own sandbox needs user namespaces, which the pod's seccomp profile refuses; the RuntimeClass is the
+            # sandbox here (ADR-0001 D9). The service refuses to start with the first unless the second says why.
+            - name: IDP_BROWSER_NO_SANDBOX
+              value: "true"
+            - name: IDP_BROWSER_ISOLATED_BY            # replaced by kustomization.yaml from settings.yaml
+              value: gvisor
+            - name: IDP_BROWSER_POOL
+              value: "2"
+            - name: IDP_BROWSER_PROXY
+              value: "idp-browser-proxy.idp-browser.svc.cluster.local:3128"
+            - name: IDP_BROWSER_PROXY_ADMIN
+              value: "http://idp-browser-proxy.idp-browser.svc.cluster.local:3129"
+            - name: IDP_BROWSER_PROXY_ADMIN_KEY_FILE
+              value: /etc/idp/proxy/admin.key
+            # Never IDP_BROWSER_TEST_ORIGINS: it exempts addresses from the address rules, and tests/deploy fails if it is in these files.
+          readinessProbe:
+            httpGet: {path: /readyz, port: ops}     # 200 only when the browser executable is there and the proxy's admin port answers
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: ops}
+            periodSeconds: 20
+          resources:
+            requests: {cpu: "1", memory: 2Gi}
+            limits: {cpu: "2", memory: 4Gi}         # two browsers of up to 1.5 GiB (IDP_BROWSER_RENDER_MEMORY_MB) and the service
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - {name: profile, mountPath: /profile}
+            - {name: tmp, mountPath: /tmp}
+            - {name: caller-keys, mountPath: /etc/idp/caller, readOnly: true}
+            - {name: proxy-admin-key, mountPath: /etc/idp/proxy, readOnly: true}
+      volumes:
+        - name: profile                             # the browsers' profiles: memory-backed, gone with the pod
+          emptyDir: {medium: Memory, sizeLimit: 2Gi}
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 256Mi}
+        - name: caller-keys
+          configMap:
+            name: idp-browser-caller-keys
+        - name: proxy-admin-key
+          secret:
+            secretName: idp-browser-proxy-admin-key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: idp-browser
+  namespace: idp-browser
+  labels:
+    app.kubernetes.io/component: renderer
+spec:
+  selector:
+    app.kubernetes.io/component: renderer
+  ports:
+    - name: api
+      port: 8590
+      targetPort: api

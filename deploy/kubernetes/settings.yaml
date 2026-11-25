@@ -1,0 +1,12 @@
+# The settings the manifests take from one place (kustomization.yaml copies them into the objects):
+#   runtimeClass  the RuntimeClass of the renderer pods: gVisor (runsc) or Kata. Chromium's own sandbox is switched off in this
+#                 pod (IDP_BROWSER_NO_SANDBOX) on the statement that this class isolates it (ADR-0001 D9), so it must be one that does.
+#   isolatedBy    which of the two it is: gvisor or kata (the service refuses to start with --no-sandbox without it)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: idp-browser-settings
+  namespace: idp-browser
+data:
+  runtimeClass: gvisor
+  isolatedBy: gvisor
