@@ -65,7 +65,7 @@ proxy（`cmd/idp-browser-proxy/main.go`）：`IDP_BROWSER_PROXY_LISTEN`（3128�
 - **加入平台的镜像镜像清单**（`releases/mirror-images.yaml`，平台任务 L1-4 做）：
 
   ```yaml
-  - source: docker.io/chromedp/headless-shell@sha256:381353d3530ab9d579d2fe8b9c0f4519c995617f5a71daf6bb649e2d12005bd9
+  - source: docker.io/chromedp/headless-shell@sha256:381353d3530ab9d579d2fe8b9c0f4519c995617f5a71daf6bb649e2d12005bd9   # mirror:upstream (an entry of the list names the source)
     tag: "159.0.8154.13"
     target: ghcr.io/idp-xyz/mirror:docker.io__chromedp__headless-shell__159.0.8154.13
   ```
